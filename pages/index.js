@@ -4,6 +4,7 @@ import { collection, onSnapshot, doc, updateDoc, orderBy, query } from 'firebase
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
+  const [expandedDone, setExpandedDone] = useState({});
 
   useEffect(() => {
     const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
@@ -19,6 +20,10 @@ export default function Dashboard() {
 
   const markDone = async (id) => {
     await updateDoc(doc(db, 'orders', id), { status: 'done' });
+  };
+
+  const toggleExpand = (id) => {
+    setExpandedDone(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const printOrder = (order) => {
@@ -40,6 +45,18 @@ export default function Dashboard() {
     win.document.write('<pre style="font-family:monospace;font-size:14px;width:280px;padding:10px;">' + lines + '</pre>');
     win.document.close();
     win.print();
+  };
+
+  const formatTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
   };
 
   const newOrders = orders.filter(o => o.status === 'new');
@@ -78,12 +95,46 @@ export default function Dashboard() {
 
       {doneOrders.length > 0 && (
         <div style={{marginTop:30}}>
-          <h3 style={{color:'#888',marginBottom:8}}>Completed ({doneOrders.length})</h3>
+          <h3 style={{color:'#888',marginBottom:12}}>Completed ({doneOrders.length})</h3>
           {doneOrders.map(order => (
-            <div key={order.id} style={{display:'flex',justifyContent:'space-between',backgroundColor:'white',padding:'10px 16px',borderRadius:8,marginBottom:8,opacity:0.6}}>
-              <span>{order.customerName}</span>
-              <span>{order.total}</span>
-              <span style={{color:'green'}}>Done</span>
+            <div key={order.id} style={{backgroundColor:'white',borderRadius:12,marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,0.08)',borderLeft:'5px solid #27ae60',overflow:'hidden'}}>
+
+              {/* Collapsed row - always visible */}
+              <div
+                onClick={() => toggleExpand(order.id)}
+                style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 16px',cursor:'pointer'}}
+              >
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:16,fontWeight:'bold',color:'#333'}}>{order.customerName}</span>
+                  <span style={{fontSize:13,color:'#888'}}>{order.customerPhone}</span>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <strong style={{color:'#333'}}>{order.total}</strong>
+                  <span style={{fontSize:12,color:'#888'}}>{formatTime(order.createdAt)}</span>
+                  <span style={{color:'#27ae60',fontSize:18}}>{expandedDone[order.id] ? '▲' : '▼'}</span>
+                </div>
+              </div>
+
+              {/* Expanded details */}
+              {expandedDone[order.id] && (
+                <div style={{padding:'0 16px 16px 16px',borderTop:'1px solid #f0f0f0'}}>
+                  <div style={{color:'#555',marginBottom:8,marginTop:10}}>
+                    <span style={{fontWeight:'bold'}}>Pickup:</span> {order.pickupTime}
+                  </div>
+                  <pre style={{backgroundColor:'#f9f9f9',padding:10,borderRadius:8,fontSize:14,whiteSpace:'pre-wrap',margin:'8px 0'}}>{order.items}</pre>
+                  <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:12,fontSize:14}}>
+                    <span>Subtotal: {order.subtotal}</span>
+                    <span>Tax: {order.tax}</span>
+                    <strong>Total: {order.total}</strong>
+                  </div>
+                  <button
+                    style={{padding:'8px 16px',fontSize:14,backgroundColor:'#2c3e50',color:'white',border:'none',borderRadius:8,cursor:'pointer'}}
+                    onClick={() => printOrder(order)}
+                  >
+                    Print Receipt
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
