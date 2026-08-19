@@ -5,10 +5,35 @@ import { collection, onSnapshot, doc, updateDoc, orderBy, query } from 'firebase
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [expandedDone, setExpandedDone] = useState({});
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const prevNewOrderIds = useRef(new Set());
   const audioContext = useRef(null);
 
-  // Play notification sound when new order arrives
+  // Unlock audio on first user interaction
+  function unlockAudio() {
+    if (!audioUnlocked) {
+      try {
+        if (!audioContext.current) {
+          audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.current.state === 'suspended') {
+          audioContext.current.resume();
+        }
+        // Play a silent buffer to unlock
+        const buffer = audioContext.current.createBuffer(1, 1, 22050);
+        const source = audioContext.current.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.current.destination);
+        source.start(0);
+        setAudioUnlocked(true);
+        console.log('Audio unlocked!');
+      } catch (e) {
+        console.log('Audio unlock error:', e);
+      }
+    }
+  }
+
+  // Play notification sound
   function playOrderSound() {
     try {
       if (!audioContext.current) {
@@ -16,18 +41,22 @@ export default function Dashboard() {
       }
       const ctx = audioContext.current;
 
-      // Play 3 ding sounds
-      [0, 0.3, 0.6].forEach((delay) => {
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      [0, 0.35, 0.7].forEach((delay) => {
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
         oscillator.connect(gainNode);
         gainNode.connect(ctx.destination);
+        oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(880, ctx.currentTime + delay);
         oscillator.frequency.setValueAtTime(1100, ctx.currentTime + delay + 0.1);
-        gainNode.gain.setValueAtTime(0.5, ctx.currentTime + delay);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.4);
+        gainNode.gain.setValueAtTime(0.8, ctx.currentTime + delay);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.5);
         oscillator.start(ctx.currentTime + delay);
-        oscillator.stop(ctx.currentTime + delay + 0.4);
+        oscillator.stop(ctx.currentTime + delay + 0.5);
       });
     } catch (e) {
       console.log('Audio error:', e);
@@ -42,11 +71,9 @@ export default function Dashboard() {
         ...d.data()
       }));
 
-      // Check for new orders and play sound
       const currentNewOrders = newOrders.filter(o => o.status === 'new');
       const currentNewIds = new Set(currentNewOrders.map(o => o.id));
 
-      // Find orders that weren't there before
       let hasNewOrder = false;
       currentNewIds.forEach(id => {
         if (!prevNewOrderIds.current.has(id)) {
@@ -54,7 +81,7 @@ export default function Dashboard() {
         }
       });
 
-      if (hasNewOrder && prevNewOrderIds.current.size > 0) {
+      if (hasNewOrder && prevNewOrderIds.current.size >= 0) {
         playOrderSound();
       }
 
@@ -93,12 +120,11 @@ export default function Dashboard() {
     win.print();
   };
 
-  // Format time in Leander CST timezone
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return date.toLocaleString('en-US', {
-      timeZone: 'America/Chicago', // Leander TX = Central Time
+      timeZone: 'America/Chicago',
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
@@ -111,11 +137,23 @@ export default function Dashboard() {
   const doneOrders = orders.filter(o => o.status === 'done');
 
   return (
-    <div style={{maxWidth:600,margin:'0 auto',padding:16,backgroundColor:'#f5f5f5',minHeight:'100vh'}}>
+    <div onClick={unlockAudio} style={{maxWidth:600,margin:'0 auto',padding:16,backgroundColor:'#f5f5f5',minHeight:'100vh'}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
         <h1 style={{fontSize:22,fontWeight:'bold',color:'#c0392b',margin:0}}>Pizza Depot Leander</h1>
         <span style={{backgroundColor:'#c0392b',color:'white',borderRadius:20,padding:'4px 12px',fontWeight:'bold'}}>{newOrders.length} New</span>
       </div>
+
+      {!audioUnlocked && (
+        <div style={{backgroundColor:'#fff3cd',border:'1px solid #ffc107',borderRadius:8,padding:12,marginBottom:16,textAlign:'center',fontSize:14,color:'#856404'}}>
+          👆 Tap anywhere on this page to enable order sounds
+        </div>
+      )}
+
+      {audioUnlocked && (
+        <div style={{backgroundColor:'#d4edda',border:'1px solid #28a745',borderRadius:8,padding:8,marginBottom:16,textAlign:'center',fontSize:13,color:'#155724'}}>
+          🔔 Order sounds enabled
+        </div>
+      )}
 
       {newOrders.length === 0 && (
         <div style={{textAlign:'center',padding:40,color:'#888',fontSize:18}}>No new orders - waiting...</div>
