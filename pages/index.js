@@ -1,10 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, doc, updateDoc, orderBy, query } from 'firebase/firestore';
 
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [expandedDone, setExpandedDone] = useState({});
+  const prevNewOrderIds = useRef(new Set());
+  const audioContext = useRef(null);
+
+  // Play notification sound when new order arrives
+  function playOrderSound() {
+    try {
+      if (!audioContext.current) {
+        audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioContext.current;
+
+      // Play 3 ding sounds
+      [0, 0.3, 0.6].forEach((delay) => {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime + delay);
+        oscillator.frequency.setValueAtTime(1100, ctx.currentTime + delay + 0.1);
+        gainNode.gain.setValueAtTime(0.5, ctx.currentTime + delay);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.4);
+        oscillator.start(ctx.currentTime + delay);
+        oscillator.stop(ctx.currentTime + delay + 0.4);
+      });
+    } catch (e) {
+      console.log('Audio error:', e);
+    }
+  }
 
   useEffect(() => {
     const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
@@ -13,6 +41,24 @@ export default function Dashboard() {
         id: d.id,
         ...d.data()
       }));
+
+      // Check for new orders and play sound
+      const currentNewOrders = newOrders.filter(o => o.status === 'new');
+      const currentNewIds = new Set(currentNewOrders.map(o => o.id));
+
+      // Find orders that weren't there before
+      let hasNewOrder = false;
+      currentNewIds.forEach(id => {
+        if (!prevNewOrderIds.current.has(id)) {
+          hasNewOrder = true;
+        }
+      });
+
+      if (hasNewOrder && prevNewOrderIds.current.size > 0) {
+        playOrderSound();
+      }
+
+      prevNewOrderIds.current = currentNewIds;
       setOrders(newOrders);
     });
     return () => unsubscribe();
@@ -47,10 +93,12 @@ export default function Dashboard() {
     win.print();
   };
 
+  // Format time in Leander CST timezone
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return date.toLocaleString('en-US', {
+      timeZone: 'America/Chicago', // Leander TX = Central Time
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
@@ -86,6 +134,9 @@ export default function Dashboard() {
             <span>Tax: {order.tax}</span>
             <strong>Total: {order.total}</strong>
           </div>
+          <div style={{fontSize:12,color:'#888',marginBottom:8}}>
+            Received: {formatTime(order.createdAt)} CST
+          </div>
           <div style={{display:'flex',gap:12}}>
             <button style={{flex:1,padding:12,fontSize:16,backgroundColor:'#2c3e50',color:'white',border:'none',borderRadius:8,cursor:'pointer'}} onClick={() => printOrder(order)}>Print</button>
             <button style={{flex:1,padding:12,fontSize:16,backgroundColor:'#27ae60',color:'white',border:'none',borderRadius:8,cursor:'pointer'}} onClick={() => markDone(order.id)}>Done</button>
@@ -98,8 +149,6 @@ export default function Dashboard() {
           <h3 style={{color:'#888',marginBottom:12}}>Completed ({doneOrders.length})</h3>
           {doneOrders.map(order => (
             <div key={order.id} style={{backgroundColor:'white',borderRadius:12,marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,0.08)',borderLeft:'5px solid #27ae60',overflow:'hidden'}}>
-
-              {/* Collapsed row - always visible */}
               <div
                 onClick={() => toggleExpand(order.id)}
                 style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 16px',cursor:'pointer'}}
@@ -115,7 +164,6 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Expanded details */}
               {expandedDone[order.id] && (
                 <div style={{padding:'0 16px 16px 16px',borderTop:'1px solid #f0f0f0'}}>
                   <div style={{color:'#555',marginBottom:8,marginTop:10}}>
@@ -126,6 +174,9 @@ export default function Dashboard() {
                     <span>Subtotal: {order.subtotal}</span>
                     <span>Tax: {order.tax}</span>
                     <strong>Total: {order.total}</strong>
+                  </div>
+                  <div style={{fontSize:12,color:'#888',marginBottom:8}}>
+                    Received: {formatTime(order.createdAt)} CST
                   </div>
                   <button
                     style={{padding:'8px 16px',fontSize:14,backgroundColor:'#2c3e50',color:'white',border:'none',borderRadius:8,cursor:'pointer'}}
