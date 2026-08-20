@@ -5,6 +5,7 @@ import { collection, onSnapshot, doc, updateDoc, orderBy, query } from 'firebase
 export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [expandedDone, setExpandedDone] = useState({});
+  const [acceptedOrders, setAcceptedOrders] = useState(new Set());
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const prevNewOrderIds = useRef(new Set());
   const audioContext = useRef(null);
@@ -59,7 +60,7 @@ export default function Dashboard() {
   }
 
   function startContinuousBell() {
-    if (bellInterval.current) return; // already running
+    if (bellInterval.current) return;
     playOrderSound();
     bellInterval.current = setInterval(() => {
       playOrderSound();
@@ -84,18 +85,18 @@ export default function Dashboard() {
       const currentNewOrders = newOrders.filter(o => o.status === 'new');
       const currentNewIds = new Set(currentNewOrders.map(o => o.id));
 
-      let hasNewOrder = false;
+      // Check if there are any unaccepted new orders
+      let hasUnacceptedOrder = false;
       currentNewIds.forEach(id => {
         if (!prevNewOrderIds.current.has(id)) {
-          hasNewOrder = true;
+          hasUnacceptedOrder = true;
         }
       });
 
-      if (hasNewOrder) {
+      if (hasUnacceptedOrder) {
         startContinuousBell();
       }
 
-      // Stop bell if no more new orders
       if (currentNewIds.size === 0) {
         stopContinuousBell();
       }
@@ -110,8 +111,18 @@ export default function Dashboard() {
     };
   }, []);
 
+  const acceptOrder = (id) => {
+    setAcceptedOrders(prev => new Set([...prev, id]));
+    stopContinuousBell();
+  };
+
   const markDone = async (id) => {
     await updateDoc(doc(db, 'orders', id), { status: 'done' });
+    setAcceptedOrders(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const toggleExpand = (id) => {
@@ -191,9 +202,7 @@ export default function Dashboard() {
         <body>
           <div class="store-name">PIZZA DEPOT</div>
           <div class="order-label">⭐ NEW ORDER ⭐</div>
-
           <div class="divider"></div>
-
           <div class="row">
             <span class="label">Name:</span>
             <span>${order.customerName}</span>
@@ -202,17 +211,10 @@ export default function Dashboard() {
             <span class="label">Phone:</span>
             <span>${order.customerPhone}</span>
           </div>
-
-          <div class="pickup-box">
-            🕐 Pickup: ${order.pickupTime}
-          </div>
-
+          <div class="pickup-box">🕐 Pickup: ${order.pickupTime}</div>
           <div class="divider"></div>
-
           <div class="items">${order.items}</div>
-
           <div class="divider"></div>
-
           <div class="row">
             <span>Subtotal:</span>
             <span>${order.subtotal}</span>
@@ -225,16 +227,11 @@ export default function Dashboard() {
             <span>TOTAL:</span>
             <span>${order.total}</span>
           </div>
-
           <div class="divider"></div>
-
-          <div style="text-align:center; font-size:14px; margin-top:10px; color:#555;">
+          <div style="text-align:center;font-size:14px;margin-top:10px;color:#555;">
             Printed: ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })} CST
           </div>
-
-          <script>
-            window.onload = function() { window.print(); }
-          </script>
+          <script>window.onload = function() { window.print(); }<\/script>
         </body>
       </html>
     `);
@@ -280,28 +277,64 @@ export default function Dashboard() {
         <div style={{textAlign:'center',padding:40,color:'#888',fontSize:18}}>No new orders - waiting...</div>
       )}
 
-      {newOrders.map(order => (
-        <div key={order.id} style={{backgroundColor:'white',borderRadius:12,padding:16,marginBottom:16,boxShadow:'0 2px 8px rgba(0,0,0,0.1)',borderLeft:'5px solid #c0392b'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-            <span style={{fontSize:20,fontWeight:'bold'}}>{order.customerName}</span>
-            <span style={{fontSize:14,color:'#555',backgroundColor:'#fff3cd',padding:'4px 8px',borderRadius:8}}>{order.pickupTime}</span>
+      {newOrders.map(order => {
+        const isAccepted = acceptedOrders.has(order.id);
+        return (
+          <div key={order.id} style={{
+            backgroundColor: isAccepted ? '#fffbea' : 'white',
+            borderRadius:12,
+            padding:16,
+            marginBottom:16,
+            boxShadow:'0 2px 8px rgba(0,0,0,0.1)',
+            borderLeft: isAccepted ? '5px solid #f39c12' : '5px solid #c0392b'
+          }}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <span style={{fontSize:20,fontWeight:'bold'}}>{order.customerName}</span>
+              <span style={{fontSize:14,color:'#555',backgroundColor:'#fff3cd',padding:'4px 8px',borderRadius:8}}>{order.pickupTime}</span>
+            </div>
+            <div style={{color:'#555',marginBottom:8}}>{order.customerPhone}</div>
+            <pre style={{backgroundColor:'#f9f9f9',padding:10,borderRadius:8,fontSize:14,whiteSpace:'pre-wrap',margin:'8px 0'}}>{order.items}</pre>
+            <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:12,fontSize:14}}>
+              <span>Subtotal: {order.subtotal}</span>
+              <span>Tax: {order.tax}</span>
+              <strong>Total: {order.total}</strong>
+            </div>
+            <div style={{fontSize:12,color:'#888',marginBottom:8}}>
+              Received: {formatTime(order.createdAt)} CST
+            </div>
+
+            {/* Status badge */}
+            {isAccepted && (
+              <div style={{backgroundColor:'#f39c12',color:'white',borderRadius:6,padding:'4px 10px',fontSize:13,fontWeight:'bold',display:'inline-block',marginBottom:10}}>
+                ✅ Accepted — being prepared
+              </div>
+            )}
+
+            <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+              <button
+                style={{flex:1,padding:12,fontSize:16,backgroundColor:'#2c3e50',color:'white',border:'none',borderRadius:8,cursor:'pointer'}}
+                onClick={() => printOrder(order)}
+              >
+                🖨️ Print
+              </button>
+              {!isAccepted && (
+                <button
+                  style={{flex:1,padding:12,fontSize:16,backgroundColor:'#e67e22',color:'white',border:'none',borderRadius:8,cursor:'pointer',fontWeight:'bold'}}
+                  onClick={() => acceptOrder(order.id)}
+                >
+                  📣 Accept
+                </button>
+              )}
+              <button
+                style={{flex:1,padding:12,fontSize:16,backgroundColor:'#27ae60',color:'white',border:'none',borderRadius:8,cursor:'pointer'}}
+                onClick={() => markDone(order.id)}
+              >
+                ✅ Done
+              </button>
+            </div>
           </div>
-          <div style={{color:'#555',marginBottom:8}}>{order.customerPhone}</div>
-          <pre style={{backgroundColor:'#f9f9f9',padding:10,borderRadius:8,fontSize:14,whiteSpace:'pre-wrap',margin:'8px 0'}}>{order.items}</pre>
-          <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:12,fontSize:14}}>
-            <span>Subtotal: {order.subtotal}</span>
-            <span>Tax: {order.tax}</span>
-            <strong>Total: {order.total}</strong>
-          </div>
-          <div style={{fontSize:12,color:'#888',marginBottom:8}}>
-            Received: {formatTime(order.createdAt)} CST
-          </div>
-          <div style={{display:'flex',gap:12}}>
-            <button style={{flex:1,padding:12,fontSize:16,backgroundColor:'#2c3e50',color:'white',border:'none',borderRadius:8,cursor:'pointer'}} onClick={() => printOrder(order)}>Print</button>
-            <button style={{flex:1,padding:12,fontSize:16,backgroundColor:'#27ae60',color:'white',border:'none',borderRadius:8,cursor:'pointer'}} onClick={() => markDone(order.id)}>Done</button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       {doneOrders.length > 0 && (
         <div style={{marginTop:30}}>
