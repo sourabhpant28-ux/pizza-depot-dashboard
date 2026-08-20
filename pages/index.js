@@ -8,8 +8,8 @@ export default function Dashboard() {
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const prevNewOrderIds = useRef(new Set());
   const audioContext = useRef(null);
+  const bellInterval = useRef(null);
 
-  // Unlock audio on first user interaction
   function unlockAudio() {
     if (!audioUnlocked) {
       try {
@@ -19,7 +19,6 @@ export default function Dashboard() {
         if (audioContext.current.state === 'suspended') {
           audioContext.current.resume();
         }
-        // Play a silent buffer to unlock
         const buffer = audioContext.current.createBuffer(1, 1, 22050);
         const source = audioContext.current.createBufferSource();
         source.buffer = buffer;
@@ -33,17 +32,13 @@ export default function Dashboard() {
     }
   }
 
-  // Play notification sound
   function playOrderSound() {
     try {
       if (!audioContext.current) {
         audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
       }
       const ctx = audioContext.current;
-
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
+      if (ctx.state === 'suspended') ctx.resume();
 
       [0, 0.35, 0.7].forEach((delay) => {
         const oscillator = ctx.createOscillator();
@@ -60,6 +55,21 @@ export default function Dashboard() {
       });
     } catch (e) {
       console.log('Audio error:', e);
+    }
+  }
+
+  function startContinuousBell() {
+    if (bellInterval.current) return; // already running
+    playOrderSound();
+    bellInterval.current = setInterval(() => {
+      playOrderSound();
+    }, 3000);
+  }
+
+  function stopContinuousBell() {
+    if (bellInterval.current) {
+      clearInterval(bellInterval.current);
+      bellInterval.current = null;
     }
   }
 
@@ -81,14 +91,23 @@ export default function Dashboard() {
         }
       });
 
-      if (hasNewOrder && prevNewOrderIds.current.size >= 0) {
-        playOrderSound();
+      if (hasNewOrder) {
+        startContinuousBell();
+      }
+
+      // Stop bell if no more new orders
+      if (currentNewIds.size === 0) {
+        stopContinuousBell();
       }
 
       prevNewOrderIds.current = currentNewIds;
       setOrders(newOrders);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribe();
+      stopContinuousBell();
+    };
   }, []);
 
   const markDone = async (id) => {
@@ -101,23 +120,125 @@ export default function Dashboard() {
 
   const printOrder = (order) => {
     const win = window.open('', '_blank');
-    const lines = [
-      'PIZZA DEPOT LEANDER',
-      'NEW ORDER',
-      '------------------------',
-      'Name: ' + order.customerName,
-      'Phone: ' + order.customerPhone,
-      'Pickup: ' + order.pickupTime,
-      '------------------------',
-      order.items,
-      '------------------------',
-      'Subtotal: ' + order.subtotal,
-      'Tax: ' + order.tax,
-      'TOTAL: ' + order.total,
-    ].join('\n');
-    win.document.write('<pre style="font-family:monospace;font-size:14px;width:280px;padding:10px;">' + lines + '</pre>');
+    win.document.write(`
+      <html>
+        <head>
+          <title>Order - ${order.customerName}</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 18px;
+              padding: 20px;
+              width: 100%;
+              max-width: 400px;
+              margin: 0 auto;
+            }
+            .store-name {
+              font-size: 26px;
+              font-weight: bold;
+              text-align: center;
+              margin-bottom: 4px;
+            }
+            .order-label {
+              font-size: 22px;
+              font-weight: bold;
+              text-align: center;
+              margin-bottom: 12px;
+              text-transform: uppercase;
+            }
+            .divider {
+              border-top: 2px dashed #000;
+              margin: 10px 0;
+            }
+            .row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 6px;
+              font-size: 18px;
+            }
+            .label {
+              font-weight: bold;
+              margin-right: 8px;
+            }
+            .items {
+              font-size: 17px;
+              white-space: pre-wrap;
+              margin: 8px 0;
+              line-height: 1.6;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              font-size: 22px;
+              font-weight: bold;
+              margin-top: 6px;
+            }
+            .pickup-box {
+              border: 3px solid #000;
+              padding: 10px;
+              text-align: center;
+              font-size: 20px;
+              font-weight: bold;
+              margin: 12px 0;
+              border-radius: 6px;
+            }
+            @media print {
+              body { padding: 10px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="store-name">PIZZA DEPOT</div>
+          <div class="order-label">⭐ NEW ORDER ⭐</div>
+
+          <div class="divider"></div>
+
+          <div class="row">
+            <span class="label">Name:</span>
+            <span>${order.customerName}</span>
+          </div>
+          <div class="row">
+            <span class="label">Phone:</span>
+            <span>${order.customerPhone}</span>
+          </div>
+
+          <div class="pickup-box">
+            🕐 Pickup: ${order.pickupTime}
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="items">${order.items}</div>
+
+          <div class="divider"></div>
+
+          <div class="row">
+            <span>Subtotal:</span>
+            <span>${order.subtotal}</span>
+          </div>
+          <div class="row">
+            <span>Tax (8.25%):</span>
+            <span>${order.tax}</span>
+          </div>
+          <div class="total-row">
+            <span>TOTAL:</span>
+            <span>${order.total}</span>
+          </div>
+
+          <div class="divider"></div>
+
+          <div style="text-align:center; font-size:14px; margin-top:10px; color:#555;">
+            Printed: ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })} CST
+          </div>
+
+          <script>
+            window.onload = function() { window.print(); }
+          </script>
+        </body>
+      </html>
+    `);
     win.document.close();
-    win.print();
   };
 
   const formatTime = (timestamp) => {
